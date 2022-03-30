@@ -10,7 +10,7 @@ class FOADataset(Dataset):
     TODO: CURRENTLY ONLY GETS FILENAMES, DOES NO PREPROCESSING
     """
 
-    def __init__(self, data_path, folds, train=True):
+    def __init__(self, data_path, folds=None, train=True):
         """
         Init Function for FOADataset
         :param data_path: String path to root folder containing 'foa_dev' and 'metadata_dev'
@@ -32,11 +32,11 @@ class FOADataset(Dataset):
         self.folds = folds
         self.foa_files = [
             osp.join(foa_directory, file) for file, data in zip(all_foa_files, foa_file_data)
-            if (data["fold"] in folds)
+            if (folds is None or data["fold"] in folds)
         ]
         self.meta_files = [
             osp.join(meta_directory, file) for file, data in zip(all_meta_files, meta_file_data)
-            if (data["fold"] in folds)
+            if (folds is None or data["fold"] in folds)
         ]
         assert len(self.foa_files) == len(self.meta_files)
 
