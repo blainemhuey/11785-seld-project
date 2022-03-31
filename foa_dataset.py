@@ -144,12 +144,12 @@ class FOADataset(Dataset):
 
     @staticmethod
     def metadata_to_multi_accdoa(metadata, total_frames, n=3, c=len(SOUND_EVENT_CLASSES)):
-        multi_accdoa = np.zeros((3, n, c, total_frames))
+        multi_accdoa = np.zeros(( n, 3, c, total_frames))
         event_count_per_frame = np.zeros((c, total_frames), dtype=np.int)
         for metadata_i in metadata:
             f, a, s, az, el = (metadata_i["frame_number"], metadata_i["active_class"], metadata_i["source_number"],
                                metadata_i["azimuth"], metadata_i["elevation"])
-            norm_az_el = np.array([[np.cos(np.deg2rad(az))], [np.sin(np.deg2rad(az))], [np.sin(np.deg2rad(el))]])
+            norm_az_el = np.array([np.cos(np.deg2rad(az)), np.sin(np.deg2rad(az)), np.sin(np.deg2rad(el))])
             multi_accdoa[:, event_count_per_frame[a, f]:, a, f] = norm_az_el
             event_count_per_frame[a, f] += 1
         return multi_accdoa
