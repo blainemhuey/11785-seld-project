@@ -155,7 +155,7 @@ class FOADataset(Dataset):
         return multi_accdoa
 
     def __len__(self):
-        return self.features[1]
+        return self.features.shape[-1]
 
     def __getitem__(self, item):
-        return self.features[:, item, :], self.multi_accdoa[:, :, :, item]
+        return self.features[:, :, item], self.multi_accdoa[:, :, :, item]
