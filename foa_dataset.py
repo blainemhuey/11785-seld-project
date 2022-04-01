@@ -26,17 +26,20 @@ SOUND_EVENT_CLASSES = [
 class FOADataset(Dataset):
     """
     Custom PyTorch Dataset for DCASE FOA Datsets
-
-    TODO: CURRENTLY IMPLEMENTS MEL SPECTRA AND INTENSITY VECTORS (i.e. SELDNet Inputs)
     """
 
-    def __init__(self, data_path, folds=None, train=True):
+    implemented_model_features = ["seldnet", "rd3net"]
+
+    def __init__(self, data_path, folds=None, train=True, model="seldnet"):
         """
         Init Function for FOADataset
         :param data_path: String path to root folder containing 'foa_dev' and 'metadata_dev'
         :param folds: List of fold integers to use in this dataset
         :param train: Bool indicating whether to use train dataset of val dataset
         """
+
+        # Assert that requested features are currently implemented
+        assert model in FOADataset.implemented_model_features
 
         # Calculate Directory Names
         foa_directory_sony = osp.join(data_path, "foa_dev", "dev-train-sony" if train else "dev-test-sony")
@@ -67,14 +70,16 @@ class FOADataset(Dataset):
         self.meta_files.sort()
         assert len(self.foa_files) == len(self.meta_files)
 
-        # TODO: Add Options for Other Input Features
         # Load SELDNet Input Features and ACCDOA Output
         features = []
         multi_accdoas = []
         for foa_file, meta_file in zip(self.foa_files, self.meta_files):
-            feature = self.audio_to_foa_features(foa_file)
+            if model == "seldnet":
+                feature = self.audio_to_seldnet_features(foa_file, hop_length=20)
+            else:
+                feature = self.audio_to_rd3net_features(foa_file, hop_length=20)
             multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
-                                                         total_frames=feature.shape[2])
+                                                         total_frames=feature.shape[2] // (100 // 20))
             features.append(feature)
             multi_accdoas.append(multi_accdoa)
         self.features = torch.concat(features, dim=-1)
@@ -97,7 +102,7 @@ class FOADataset(Dataset):
         return {"fold": fold, "room": room, "mix": mix}
 
     @staticmethod
-    def audio_to_foa_features(file, fft_size=1024, hop_length=20):
+    def audio_to_seldnet_features(file, fft_size=1024, hop_length=20):
         """
         Generates the SELDNet Input Features
         :param file: Filepath to Audio File to Load
@@ -116,9 +121,31 @@ class FOADataset(Dataset):
             mel_spec = mel_trans(torch.real(torch.pow(spectrogram, 2)))
 
             intensity = torch.real(torch.conj(spectrogram[0]) * spectrogram[1:])
-            intensity = intensity / torch.norm(intensity, dim=0)  # TODO: Check shape
+            intensity = intensity / torch.norm(intensity, dim=0)
             mel_intensity = mel_trans(intensity)
         return torch.concat((mel_spec, mel_intensity), dim=0)
+
+    @staticmethod
+    def audio_to_rd3net_features(file, fft_size=1024, hop_length=20):
+        """
+        Generates the RD3Net Input Features
+        :param file: Filepath to Audio File to Load
+        :param fft_size: Size of FFT calculation to perform
+        :param hop_length: Stride of FFT in ms
+        :return: torch.Tensor of Shape 7x(fft/2+1)xT
+        """
+        waveform, sample_rate = torchaudio.load(file, normalize=True)
+
+        spec_trans = torchaudio.transforms.Spectrogram(n_fft=fft_size, hop_length=sample_rate // (1000 // hop_length),
+                                                       pad=0, power=None)
+
+        with torch.no_grad():
+            spectrogram = spec_trans(waveform)
+
+            amplitude = torch.abs(spectrogram)
+            ipd = torch.angle(spectrogram[0]) - torch.angle(spectrogram[1:])
+
+        return torch.concat((amplitude, ipd), dim=0)
 
     @staticmethod
     def load_metadata(file):
@@ -144,11 +171,20 @@ class FOADataset(Dataset):
 
     @staticmethod
     def metadata_to_multi_accdoa(metadata, total_frames, n=3, c=len(SOUND_EVENT_CLASSES)):
-        multi_accdoa = np.zeros(( n, 3, c, total_frames))
+        """
+        Turns a List of Python Dictionaries with SELD Labels Into A Multi-ACCDOA Truth Vector
+        :param metadata: List of Python Dictionaries (from 'load_metadata')
+        :param total_frames: Total number of 100ms frames in source audio
+        :param n: Maximum number of repetitions
+        :param c: Number of classes
+        :return: N x 3 x C x Total Frames Numpy Ndarray
+        """
+        multi_accdoa = np.zeros((n, 3, c, total_frames))
         event_count_per_frame = np.zeros((c, total_frames), dtype=np.int)
         for metadata_i in metadata:
             f, a, s, az, el = (metadata_i["frame_number"], metadata_i["active_class"], metadata_i["source_number"],
                                metadata_i["azimuth"], metadata_i["elevation"])
+            f -= 1
             norm_az_el = np.array([np.cos(np.deg2rad(az)), np.sin(np.deg2rad(az)), np.sin(np.deg2rad(el))])
             multi_accdoa[event_count_per_frame[a, f]:, :, a, f] = norm_az_el
             event_count_per_frame[a, f] += 1
