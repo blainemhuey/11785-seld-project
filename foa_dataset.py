@@ -150,7 +150,7 @@ class FOADataset(Dataset):
             f, a, s, az, el = (metadata_i["frame_number"], metadata_i["active_class"], metadata_i["source_number"],
                                metadata_i["azimuth"], metadata_i["elevation"])
             norm_az_el = np.array([[np.cos(np.deg2rad(az))], [np.sin(np.deg2rad(az))], [np.sin(np.deg2rad(el))]])
-            multi_accdoa[:, event_count_per_frame[a, f]:, a, f] = norm_az_el
+            multi_accdoa[event_count_per_frame[a, f]:, :, a, f] = norm_az_el
             event_count_per_frame[a, f] += 1
         return multi_accdoa
 
