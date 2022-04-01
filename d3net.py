@@ -18,20 +18,19 @@ class MultidilatedConv2dBlock(nn.Module):
             padding = (d * (kernel_size - 1)) // 2
 
             # Make Parallel Convolution for Each Dilation Level
-            new_conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride,
+            new_conv = nn.Conv2d(in_channels, out_channels-in_channels, kernel_size, stride=stride,
                                  padding=padding, groups=groups, bias=bias, padding_mode=padding_mode,
                                  device=device, dilation=d)
             self.convolutions.append(new_conv)
 
-    def forward(self, *args):
+    def forward(self, x):
         output = None
-        for conv, x in zip(self.convolutions, args):
+        for conv in self.convolutions:
             if output is None:
-                output = conv(args)
+                output = conv(x)
             else:
-                output = output + conv(
-                    args)  # TODO: Different Dilations combined before or after module? Concatenate or add?
-        return output
+                output = output + conv(x)
+        return torch.concat((x, output), dim=0)
 
 
 class D2Block(nn.Module):
@@ -43,6 +42,7 @@ class D2Block(nn.Module):
         super().__init__()
 
         self.dilation_factors = dilation_factors
+        self.growth_rate = growth_rate
         self.compression_rate = compression_rate
 
         # Add Bottleneck layer when in_channels > 4*k
@@ -55,24 +55,23 @@ class D2Block(nn.Module):
         # Create multidilated layers, with each having one more dilation until all dilations are used
         layers = []
         for i in range(len(dilation_factors)):
-            selected_dilation_factors = dilation_factors[:i]
-            layers.append(MultidilatedConv2dBlock(in_channels, in_channels * growth_rate, kernel_size,
+            selected_dilation_factors = dilation_factors[:i+1]
+            layers.append(MultidilatedConv2dBlock(in_channels, in_channels + growth_rate, kernel_size,
                                                   dilation_factors=selected_dilation_factors))
-            in_channels *= growth_rate
+            in_channels += growth_rate
         self.dilated_layers = layers
 
         # Add Compression layer
         # TODO: Compress layer not needed for audio source separation?  D3Net Paper says so
-        # self.compress = nn.Conv2d()
+        self.compress = None  # nn.Conv2d()
 
     def forward(self, x):
-        values = [x if self.bottleneck is None else self.bottleneck(x)]
+        values = self.bottleneck(x) if self.bottleneck else x
 
-        for i, l in enumerate(self.layers):
-            output = l(*values)
-            values.append(output)
+        for i, l in enumerate(self.dilated_layers):
+            values = l(values)
 
-        return values[-1]
+        return self.compress(values) if self.compress else values
 
 
 class D3Block(nn.Module):
@@ -85,7 +84,7 @@ class D3Block(nn.Module):
     c - Compression ratio (ignored here since it is only used for segmentation, not source separation)
     """
 
-    def __init__(self, M, L, k, B=None, c=None):
+    def __init__(self, in_channels, M, L, k, B=None, c=None):
         super().__init__()
 
         kernel_size = 3  # TODO: Is this the correct size?
@@ -93,14 +92,17 @@ class D3Block(nn.Module):
             B = 4 * k  # Bottleneck size default specified in paper
 
         d2_blocks = []
-        in_channels = 1
         for block in range(M):
             d2_block = D2Block(in_channels, kernel_size, k, B, c, dilation_factors=[2**i for i in range(L)])
-            in_channels = B * (k ** L)
+            if in_channels > B:
+                in_channels = B + (k * L)
+            else:
+                in_channels += k * L
             d2_blocks.append(d2_block)
         self.d2_blocks = d2_blocks
 
     def forward(self, x):
-        values = [x]
+        values = x
         for i, l in enumerate(self.d2_blocks):
-            pass  # TODO: How to reconcile different output sizes?
+            values = l(values)
+        return values
