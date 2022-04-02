@@ -30,7 +30,7 @@ class MultidilatedConv2dBlock(nn.Module):
                 output = conv(x)
             else:
                 output = output + conv(x)
-        return torch.concat((x, output), dim=0)
+        return torch.concat((x, output), dim=1)
 
 
 class D2Block(nn.Module):
@@ -104,7 +104,9 @@ class D3Block(nn.Module):
     def forward(self, x):
         values = x
         for i, l in enumerate(self.d2_blocks):
-            values = l(values)
+            new_values = l(values)
+            values = new_values
+            # torch.concat((values, new_values), dim=1) # Test
         return values
 
 
@@ -112,23 +114,30 @@ class Network(torch.nn.Module):
     def __init__(self):
         super(Network, self).__init__()
 
-        layers = [
+        self.layers = [
             D3Block(7, 4, 4, 16, 2),
-            nn.Conv2d(23, 23/2 , 1),  #stride?
+            nn.Conv2d(66, 66//2, 1),  #stride?
             nn.AvgPool2d(2),
-            D3Block(23/2, 4, 4, 24, 2),
-            nn.Conv2d(27, 27/2, 1), 
+            D3Block(66//2, 4, 4, 24, 2),
+            nn.Conv2d(98, 98//2, 1),
             nn.AvgPool2d(2),
-            D3Block(27/2, 4, 4, 32, 2),
-            nn.Conv2d(29, 29/2, 1), 
+            D3Block(98//2, 4, 4, 32, 2),
+            nn.Conv2d(130, 130//2, 1),
             nn.AvgPool2d(2),
-            D3Block(29/2, 4, 4, 40, 2),
+            D3Block(130//2, 4, 4, 40, 2),
             nn.AvgPool2d(2),
-            nn.GRU(31, 160), #check for num_layers if hidden = 160 doesnt work!
-            nn.Linear(160, 117 ), #check again
+            nn.Flatten(start_dim=-2, end_dim=-1),
+            nn.GRU(32, 160, batch_first=True), #check for num_layers if hidden = 160 doesnt work!
         ]
-        self.laysers = nn.Sequential(*layers)
+
+        self.class_layer = nn.Linear(160*162, 117)
 
     def forward(self, A):
-        x = self.laysers(A).reshape((3,3,13))
-        return x
+        for i, layer in enumerate(self.layers):
+            A = layer(A)
+
+        batch_size, size_a, size_b = A[0].shape
+        A = self.class_layer(A[0].reshape((batch_size, size_a*size_b)))
+
+        # x = self.laysers(A).reshape((3,3,13))
+        return A.reshape((batch_size,3,3,13))
