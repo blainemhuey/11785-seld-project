@@ -106,3 +106,29 @@ class D3Block(nn.Module):
         for i, l in enumerate(self.d2_blocks):
             values = l(values)
         return values
+
+
+class Network(torch.nn.Module):
+    def __init__(self):
+        super(Network, self).__init__()
+
+        layers = [
+            D3Block(7, 4, 4, 16, 2),
+            nn.Conv2d(23, 23/2 , 1),  #stride?
+            nn.AvgPool2d(2),
+            D3Block(23/2, 4, 4, 24, 2),
+            nn.Conv2d(27, 27/2, 1), 
+            nn.AvgPool2d(2),
+            D3Block(27/2, 4, 4, 32, 2),
+            nn.Conv2d(29, 29/2, 1), 
+            nn.AvgPool2d(2),
+            D3Block(29/2, 4, 4, 40, 2),
+            nn.AvgPool2d(2),
+            nn.GRU(31, 160), #check for num_layers if hidden = 160 doesnt work!
+            nn.Linear(160, 117 ), #check again
+        ]
+        self.laysers = nn.Sequential(*layers)
+
+    def forward(self, A):
+        x = self.laysers(A).reshape((3,3,13))
+        return x
