@@ -4,7 +4,7 @@ import torch.nn as nn
 
 class SELDNet(nn.Module):
 
-    def __init__(self, in_channels=7, bins=64, c=13, p=None, mp=None):
+    def __init__(self, in_channels=7, gru_hidden_size=128, c=13, p=None, mp=None):
         super().__init__()
 
         if mp is None:  # CNN Max Pooling Filter Size Per Layer
@@ -14,24 +14,25 @@ class SELDNet(nn.Module):
             p = [16, 32, 64]
 
         base_layers = []
-        for i in range(3):
+        for i in range(len(mp)):
             base_layers.append(nn.Conv2d(in_channels, p[i], 3, padding=1))
+            base_layers.append(nn.BatchNorm2d(p[i]))
             base_layers.append(nn.ReLU())
-            base_layers.append(nn.BatchNorm2d(bins))
             base_layers.append(nn.MaxPool2d(kernel_size=mp[i], stride=mp[i]))
-            bins = bins // mp[i][1]
+            in_channels = p[i]
 
-        for i in range(2):
-            base_layers.append(nn.GRU(input_size=128, hidden_size=128, bidirectional=True)) # TODO: What is hidden size?
-            base_layers.append(nn.Tanh())
-
+        base_layers.append(nn.Flatten())
         self.base = nn.Sequential(*base_layers)
 
-        seld_layers = [nn.Linear(128, 128), nn.Linear(128, 3 * 3 * c), nn.Tanh()]
+        self.gru = nn.GRU(input_size=128, hidden_size=gru_hidden_size, num_layers=2, bidirectional=True,
+                          batch_first=True)  # TODO: What is hidden size?
+
+        seld_layers = [nn.Linear(gru_hidden_size * 2, 128), nn.Linear(128, 3 * 3 * c), nn.Tanh()]
         self.seld = nn.Sequential(*seld_layers)
 
     def forward(self, x):
         base = self.base(x)
-        _, t, _ = base.shape
-        reshaped = base.reshape((t, 128))
-        return self.seld(reshaped)
+        gru, _ = self.gru(base)
+        seld = self.seld(gru)
+        b, t = seld.shape
+        return seld.reshape((b, 3, 3, t // (3 * 3)))
