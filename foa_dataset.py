@@ -79,11 +79,12 @@ class FOADataset(Dataset):
         self.feature_width = 100 // hop_length
         for foa_file, meta_file in zip(self.foa_files, self.meta_files):
             if model == "seldnet":
-                feature = self.audio_to_seldnet_features(foa_file, hop_length=hop_length)
+                feature = self.audio_to_seldnet_features(foa_file, hop_length=hop_length)[:,:,:-1]
                 multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
-                                                         total_frames=feature.shape[2] // (100 // 20))
+                                                         total_frames=feature.shape[2] // (100 // 20))[:,:,:-1]
                 feature_chunked = self.chunk_seldnet_feature(feature, feat_size)
                 multi_accdoa_chunked = self.chunk_seldnet_multiaccdoa(multi_accdoa, feat_size, hop_length )
+                assert(len(feature_chunked) == len(multi_accdoa_chunked))
                 features.extend(feature_chunked)
                 multi_accdoas.extend(multi_accdoa_chunked)
 
