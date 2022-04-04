@@ -50,7 +50,7 @@ class Network_Seldnet(nn.Module):
 		self.act = nn.Tanh()
 
 	def forward(self, x):
-		print(len(self.conv_list))
+		# print(len(self.conv_list))
 		for i in range(len(self.conv_list)):
 			x = self.conv_list[i](x)
 		
