@@ -39,7 +39,6 @@ class Network_Seldnet(nn.Module):
 				self.conv_list.append(
 					ConvBlock(pool)
 				)
-		print(len(self.conv_list))
 
 		conv_out = 64*int(64/(4*4*2))
 		self.rnn = nn.GRU(conv_out, 128, num_layers=2, bidirectional=True, batch_first=True, dropout=0.01)
@@ -51,11 +50,10 @@ class Network_Seldnet(nn.Module):
 		self.act = nn.Tanh()
 
 	def forward(self, x):
-		print("Forward")
 		print(len(self.conv_list))
 		for i in range(len(self.conv_list)):
 			x = self.conv_list[i](x)
-		print(" Post conv list")
+		
 	
 		x = x.transpose(1, 2).contiguous()
 		x = x.view(x.shape[0], x.shape[1], -1).contiguous()
