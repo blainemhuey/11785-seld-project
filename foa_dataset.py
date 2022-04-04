@@ -41,7 +41,9 @@ class FOADataset(Dataset):
 
         # Assert that requested features are currently implemented
         assert model in FOADataset.implemented_model_features
-
+        feat_size = 250
+        hop_length = 20
+        self.model = model
         # Calculate Directory Names
         foa_directory_sony = osp.join(data_path, "foa_dev", "dev-train-sony" if train else "dev-test-sony")
         meta_directory_sony = osp.join(data_path, "metadata_dev", "dev-train-sony" if train else "dev-test-sony")
@@ -78,16 +80,28 @@ class FOADataset(Dataset):
         for foa_file, meta_file in zip(self.foa_files, self.meta_files):
             if model == "seldnet":
                 feature = self.audio_to_seldnet_features(foa_file, hop_length=hop_length)
+                multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
+                                                         total_frames=feature.shape[2] // (100 // 20))
+                feature_chunked = self.chunk_seldnet_feature(feature, feat_size)
+                multi_accdoa_chunked = self.chunk_seldnet_multiaccdoa(multi_accdoa, feat_size, hop_length )
+                features.extend(feature_chunked)
+                multi_accdoas.extend(multi_accdoa_chunked)
+
             else:
                 feature = self.audio_to_rd3net_features(foa_file, hop_length=hop_length)
-            total_frames = feature.shape[2] // (100 // hop_length)
-            feature = feature[:, :, :total_frames * (100 // hop_length)]
-            multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
-                                                         total_frames=total_frames)
-            features.append(feature)
-            multi_accdoas.append(multi_accdoa)
-        self.features = pad(torch.concat(features, dim=-1), (context, context))
-        self.multi_accdoa = np.concatenate(multi_accdoas, axis=-1)
+                total_frames = feature.shape[2] // (100 // hop_length)
+                feature = feature[:, :, :total_frames * (100 // hop_length)]
+                multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
+                                                             total_frames=total_frames)
+                features.append(feature)
+                multi_accdoas.append(multi_accdoa)
+
+        if model=="seldnet":
+            self.features = np.stack(features)
+            self.multi_accdoa = np.stack(multi_accdoas)
+        else:
+            self.features = pad(torch.concat(features, dim=-1), (context, context))
+            self.multi_accdoa = np.concatenate(multi_accdoas, axis=-1)
         self.context = context
 
     @staticmethod
@@ -197,9 +211,43 @@ class FOADataset(Dataset):
             event_count_per_frame[a, f] += 1
         return multi_accdoa
 
+    @staticmethod
+    def chunk_seldnet_feature(feature, feat_size=250):
+      
+      s0,s1,s2 = feature.shape
+      # print(feature.shape)
+      news2 = int(np.ceil(s2/feat_size)*feat_size)
+      # print("padded length  ", news2)
+      feature = np.pad(feature, ((0,0), (0,0), (0,news2-s2)))
+      # print(feature.shape, "  new feature shape")
+      feature = np.reshape(feature, (7,news2,64))
+      return np.split(feature, news2/feat_size, axis=1 )
+      # return feature
+
+    @staticmethod
+    def chunk_seldnet_multiaccdoa(multi_accdoa,feat_size, hop_length):
+      split_size = feat_size//(100//hop_length)
+      # print(multi_accdoa.shape, "  multi accdoa shape")
+      # print(split_size, " split size")
+      split_count = multi_accdoa.shape[-1]/split_size
+      toPad = int(np.ceil(split_count)*split_size) - multi_accdoa.shape[-1]
+
+      multi_accdoa = np.pad(multi_accdoa, ((0,0), (0,0),(0,0), (0,toPad)))
+      # print(multi_accdoa.shape, "  multi accdoa shape")
+      split_count = multi_accdoa.shape[-1]/split_size
+      # print(split_count)
+
+
+      return np.split(multi_accdoa, split_count, axis=-1)
+
+
     def __len__(self):
+        if self.model=="seldnet":
+            return self.features.shape[0]
         return self.multi_accdoa.shape[-1]
 
     def __getitem__(self, item):
+        if self.model =="seldnet":
+            return torch.from_numpy(self.features[item]), torch.from_numpy(self.multi_accdoa[item])
         return self.features[:, :, item*self.feature_width:(item+1)*self.feature_width+self.context*2], \
                self.multi_accdoa[:, :, :, item]
