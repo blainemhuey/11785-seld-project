@@ -81,7 +81,7 @@ class FOADataset(Dataset):
             if model == "seldnet":
                 feature = self.audio_to_seldnet_features(foa_file, hop_length=hop_length)[:,:,:-1]
                 multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
-                                                         total_frames=feature.shape[2] // (100 // 20))[:,:,:-1]
+                                                         total_frames=feature.shape[2] // (100 // 20))
                 feature_chunked = self.chunk_seldnet_feature(feature, feat_size)
                 multi_accdoa_chunked = self.chunk_seldnet_multiaccdoa(multi_accdoa, feat_size, hop_length )
                 assert(len(feature_chunked) == len(multi_accdoa_chunked))
