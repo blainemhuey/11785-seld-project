@@ -3,8 +3,9 @@ import os.path as osp
 
 import numpy as np
 import torch
-from torch.utils.data.dataset import Dataset
 import torchaudio
+from torch.utils.data.dataset import Dataset
+from torch.nn.functional import pad
 
 SOUND_EVENT_CLASSES = [
     "Female speech, woman speaking",
@@ -30,7 +31,7 @@ class FOADataset(Dataset):
 
     implemented_model_features = ["seldnet", "rd3net"]
 
-    def __init__(self, data_path, folds=None, train=True, model="seldnet"):
+    def __init__(self, data_path, folds=None, train=True, model="seldnet", hop_length=20, context=0):
         """
         Init Function for FOADataset
         :param data_path: String path to root folder containing 'foa_dev' and 'metadata_dev'
@@ -73,17 +74,21 @@ class FOADataset(Dataset):
         # Load SELDNet Input Features and ACCDOA Output
         features = []
         multi_accdoas = []
+        self.feature_width = 100 // hop_length
         for foa_file, meta_file in zip(self.foa_files, self.meta_files):
             if model == "seldnet":
-                feature = self.audio_to_seldnet_features(foa_file, hop_length=20)
+                feature = self.audio_to_seldnet_features(foa_file, hop_length=hop_length)
             else:
-                feature = self.audio_to_rd3net_features(foa_file, hop_length=20)
+                feature = self.audio_to_rd3net_features(foa_file, hop_length=hop_length)
+            total_frames = feature.shape[2] // (100 // hop_length)
+            feature = feature[:, :, :total_frames * (100 // hop_length)]
             multi_accdoa = self.metadata_to_multi_accdoa(self.load_metadata(meta_file),
-                                                         total_frames=feature.shape[2] // (100 // 20))
+                                                         total_frames=total_frames)
             features.append(feature)
             multi_accdoas.append(multi_accdoa)
-        self.features = torch.concat(features, dim=-1)
+        self.features = pad(torch.concat(features, dim=-1), (context, context))
         self.multi_accdoa = np.concatenate(multi_accdoas, axis=-1)
+        self.context = context
 
     @staticmethod
     def parse_foa_file_name(file):
@@ -102,12 +107,13 @@ class FOADataset(Dataset):
         return {"fold": fold, "room": room, "mix": mix}
 
     @staticmethod
-    def audio_to_seldnet_features(file, fft_size=1024, hop_length=20):
+    def audio_to_seldnet_features(file, fft_size=1024, hop_length=20, eps=1e-8):
         """
         Generates the SELDNet Input Features
         :param file: Filepath to Audio File to Load
         :param fft_size: Size of FFT calculation to perform
         :param hop_length: Stride of FFT in ms
+        :param eps: Division eps to prevent NaN outputs
         :return: torch.Tensor of Shape 7x64xT
         """
         waveform, sample_rate = torchaudio.load(file, normalize=True)
@@ -121,7 +127,8 @@ class FOADataset(Dataset):
             mel_spec = mel_trans(torch.real(torch.pow(spectrogram, 2)))
 
             intensity = torch.real(torch.conj(spectrogram[0]) * spectrogram[1:])
-            intensity = intensity / torch.norm(intensity, dim=0)
+            intensity = intensity / (torch.pow(torch.abs(spectrogram[0]), 2) +
+                                     torch.mean(torch.pow(torch.abs(spectrogram[1:]), 2), dim=0) + eps)
             mel_intensity = mel_trans(intensity)
         return torch.concat((mel_spec, mel_intensity), dim=0)
 
@@ -191,7 +198,8 @@ class FOADataset(Dataset):
         return multi_accdoa
 
     def __len__(self):
-        return self.features.shape[-1]
+        return self.multi_accdoa.shape[-1]
 
     def __getitem__(self, item):
-        return self.features[:, :, item], self.multi_accdoa[:, :, :, item]
+        return self.features[:, :, item*self.feature_width:(item+1)*self.feature_width+self.context*2], \
+               self.multi_accdoa[:, :, :, item]
