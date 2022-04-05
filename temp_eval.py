@@ -4,14 +4,16 @@ import torch.nn as nn
 import numpy as np
 from math import ceil
 
-def angular_distance(a, b):
+def angular_distance(a, b, eps=1e-8):
     """
 
     :param a:
     :param b:
     :return:
     """
-    sigma = 2 * np.arcsin(np.linalg.norm(a - b) / 2) * 180 / np.pi
+    a_norm = a / (np.linalg.norm(a) + eps)
+    b_norm = b / (np.linalg.norm(b) + eps)
+    sigma = 2 * np.arcsin(np.linalg.norm(a_norm - b_norm) / 2) * 180 / np.pi
     return sigma
 
 def is_duplicate(a, b, duplicate_threshold):
