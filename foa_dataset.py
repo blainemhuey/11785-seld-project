@@ -122,7 +122,7 @@ class FOADataset(Dataset):
         return {"fold": fold, "room": room, "mix": mix}
 
     @staticmethod
-    def audio_to_seldnet_features(file, fft_size=1024, hop_length=20, eps=1e-8):
+    def audio_to_seldnet_features(file, hop_length=20, eps=1e-8):
         """
         Generates the SELDNet Input Features
         :param file: Filepath to Audio File to Load
@@ -133,18 +133,21 @@ class FOADataset(Dataset):
         """
         waveform, sample_rate = torchaudio.load(file, normalize=True)
 
-        spec_trans = torchaudio.transforms.Spectrogram(n_fft=fft_size, hop_length=sample_rate // (1000 // hop_length),
-                                                       pad=0, power=None)
-        mel_trans = torchaudio.transforms.MelScale(n_mels=64, sample_rate=sample_rate, n_stft=fft_size // 2 + 1)
+        hop_length = sample_rate // (1000 // hop_length)
+        n_fft = 2**(2*hop_length-1).bit_length()
+        spec_trans = torchaudio.transforms.Spectrogram(n_fft=n_fft, win_length=2 * hop_length,
+                                                       hop_length=hop_length, pad=0, power=None)
+        mel_trans = torchaudio.transforms.MelScale(n_mels=64, sample_rate=sample_rate, n_stft=n_fft//2+1)
+        db_trans = torchaudio.transforms.AmplitudeToDB(stype="power")
 
         with torch.no_grad():
             spectrogram = spec_trans(waveform)
-            mel_spec = mel_trans(torch.real(torch.pow(spectrogram, 2)))
+            mel_spec = mel_trans(torch.real(torch.pow(torch.abs(spectrogram), 2)))
 
             intensity = torch.real(torch.conj(spectrogram[0]) * spectrogram[1:])
             intensity = intensity / (torch.pow(torch.abs(spectrogram[0]), 2) +
                                      torch.mean(torch.pow(torch.abs(spectrogram[1:]), 2), dim=0) + eps)
-            mel_intensity = mel_trans(intensity)
+            mel_intensity = db_trans(mel_trans(intensity))
         return torch.concat((mel_spec, mel_intensity), dim=0)
 
     @staticmethod
