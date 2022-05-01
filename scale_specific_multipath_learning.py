@@ -1,30 +1,7 @@
 import torch
 import torch.nn as nn
 
-class Block(nn.Module):
-
-    def forward(self, A):
-        # import ipdb; ipdb.set_trace()
-        Z = self.bn1(self.conv1.forward(A))
-        Z = self.relu(Z)
-        Z = self.bn2(self.conv2.forward(Z))
-        if self.use_1x1:
-            A = self.conv3(A)
-            # still not done, have bn or not??
-        Z += A
-        return self.relu(Z)
-    
-    def forward_new(self, A):
-        Z = A
-        for layer in self.layers:
-            Z = layer.forward(Z)
-        if self.use_1x1:
-            A = self.conv3(A)
-        Z += A
-        return self.relu(Z)
-
-
-class (nn.Module):
+class PathSpecificResBlock(nn.Module):
     """
     ResBlock as described in https://arxiv.org/abs/1707.02921
     """
