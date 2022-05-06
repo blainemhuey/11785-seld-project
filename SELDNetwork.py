@@ -1,5 +1,6 @@
-# import numpy as np
-# import tor
+import numpy as np
+import torch
+import torch.nn as nn
 
 
 class ConvBlock(nn.Module):
@@ -24,7 +25,7 @@ class ConvBlock(nn.Module):
 
 
 class Network_Seldnet(nn.Module):
-	def __init__(self):
+	def __init__(self, config):
 		super().__init__()
 		# print("Here")
 		max_pool_list = [(5,4),(1,4),(1,2)]
