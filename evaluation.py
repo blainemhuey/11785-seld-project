@@ -6,6 +6,7 @@ from math import ceil
 
 from scipy.optimize import linear_sum_assignment
 
+
 def angular_distance(a, b, eps=1e-8):
     """
 
@@ -30,142 +31,161 @@ def is_duplicate(a, b, duplicate_threshold):
     return angular_distance(a, b) <= duplicate_threshold
 
 
-def calculate_statistics(est_multiaccdoa, true_multiaccdoa, duplicate_threshold=1, prob_threshold=0.5,
-                         error_threshold=20):
-    """
-    Calculates comparison statistics for SELD
+class Evaluation:
 
-    See also https://arxiv.org/pdf/2009.02792.pdf
+    def __init__(self, num_classes=13, prob_threshold=0.5, error_threshold=20, duplicate_threshold=15):
+        self.num_classes = num_classes
+        self.prob_threshold = prob_threshold
+        self.error_threshold = error_threshold
+        self.duplicate_threshold = duplicate_threshold
+        self.reset()
 
-    :return:
-    """
+    def reset(self):
+        """
 
-    # Get Length Constants from Shape
-    num_multiaccdoa, _, num_classes, frames = est_multiaccdoa.shape
+        :return:
+        """
+        num_classes = self.num_classes
+        self.tp = np.zeros((num_classes,))
+        self.fp = np.zeros((num_classes,))
+        self.fn = np.zeros((num_classes,))
+        self.kc = np.zeros((num_classes,))
+        self.n = np.zeros((num_classes,))
 
-    # Count Up TP, FP, and FN over 1s Intervals (10 100ms frames per interval)
-    num_intervals = int(ceil(frames / 10))
-    tp = np.zeros((num_classes,))
-    fp = np.zeros((num_classes,))
-    fn = np.zeros((num_classes,))
-    kc = np.zeros((num_classes,))
-    n = np.zeros((num_classes,))
+        # Class-Dependent Localization Error and Recall
+        self.le_c = [[] for _ in range(num_classes)]
 
-    # Class-Dependent Localization Error and Recall
-    le_c = [[] for _ in range(num_classes)]
-    lr_c = [[] for _ in range(num_classes)]
+        # Substitutions, Insertions, and Deletions
+        self.s = 0
+        self.d = 0
+        self.i = 0
 
-    # Substitutions, Insertions, and Deletions
-    s, d, i = 0, 0, 0
+    def calculate_batch_statistics(self, est_multiaccdoa, true_multiaccdoa):
+        """
+        Calculates comparison statistics for SELD
 
-    # Loop Through Each 1s Interval
-    for interval in range(num_intervals):
-        tp_i = np.zeros((num_classes,))
-        fp_i = np.zeros((num_classes,))
-        fn_i = np.zeros((num_classes,))
-        kc_i = np.zeros((num_classes,))
-        n_i = np.zeros((num_classes,))
+        See also https://arxiv.org/pdf/2009.02792.pdf
 
-        for c in range(num_classes):  # Each Class in the Interval
+        :return:
+        """
 
-            for frame in range(10):  # Each 100ms Frame In Interval
-                pred_occurred_list = []
-                true_occurred_list = []
+        # Get Length Constants from Shape
+        num_multiaccdoa, _, num_classes, frames = est_multiaccdoa.shape
 
-                index = interval * 10 + frame
-                if index >= frames:
-                    break  # Leave Loop If Last Frame Does Not Have 10 100ms intervals
+        # Count Up TP, FP, and FN over 1s Intervals (10 100ms frames per interval)
+        num_intervals = int(ceil(frames / 10))
 
-                # Multi-ACCDOA slices for this class and interval
-                est_ma_c = est_multiaccdoa[:, :, c, index]
-                true_ma_c = true_multiaccdoa[:, :, c, index]
+        # Loop Through Each 1s Interval
+        for interval in range(num_intervals):
 
-                # If A MultiACCDOA Vector has a Magnitude above the threshold, Then A Prediction has occurred
-                pred_vectors = np.linalg.norm(est_ma_c, axis=1) >= prob_threshold
-                if pred_vectors.any():
-                    est_ma_c_real = est_ma_c[pred_vectors, :]
-                    pred_occurred_list_temp = []
-                    for multi in range(est_ma_c_real.shape[0]):
-                        same = False
-                        for pred in pred_occurred_list_temp:
-                            if is_duplicate(pred, est_ma_c_real[multi], duplicate_threshold=duplicate_threshold):
-                                same = True
-                                break
-                        if not same:
-                            pred_occurred_list_temp.append(est_ma_c_real[multi])
-                    pred_occurred_list.extend(pred_occurred_list_temp)
 
-                # If A MultiACCDOA Vector has a Magnitude above the threshold, Then a true event has occurred
-                true_vectors = np.linalg.norm(true_ma_c, axis=1) >= prob_threshold
-                if true_vectors.any():
-                    true_ma_c_real = true_ma_c[true_vectors, :]
-                    true_occurred_list_temp = []
-                    for multi in range(true_ma_c_real.shape[0]):
-                        same = False
-                        for true in true_occurred_list_temp:
-                            if is_duplicate(true, true_ma_c_real[multi], duplicate_threshold=duplicate_threshold):
-                                same = True
-                                break
-                        if not same:
+            for c in range(num_classes):  # Each Class in the Interval
+                fp_i = 0
+                fn_i = 0
+
+                for frame in range(10):  # Each 100ms Frame In Interval
+                    pred_occurred_lists = []
+                    true_occurred_lists = []
+                    all_pred_trues = []
+                    hungarians = []
+
+                    pred_occurred_list = []
+                    true_occurred_list = []
+
+                    index = interval * 10 + frame
+                    if index >= frames:
+                        break  # Leave Loop If Last Frame Does Not Have 10 100ms intervals
+
+                    # Multi-ACCDOA slices for this class and interval
+                    est_ma_c = est_multiaccdoa[:, :, c, index]
+                    true_ma_c = true_multiaccdoa[:, :, c, index]
+
+                    # If A MultiACCDOA Vector has a Magnitude above the threshold, Then A Prediction has occurred
+                    pred_vectors = np.linalg.norm(est_ma_c, axis=1) >= self.prob_threshold
+                    if pred_vectors.any():
+                        est_ma_c_real = est_ma_c[pred_vectors, :]
+                        pred_occurred_list_temp = []
+                        for multi in range(est_ma_c_real.shape[0]):
+                            same = False
+                            for pred in pred_occurred_list_temp:
+                                if is_duplicate(pred, est_ma_c_real[multi], duplicate_threshold=self.duplicate_threshold):
+                                    same = True
+                                    break
+                            if not same:
+                                pred_occurred_list_temp.append(est_ma_c_real[multi])
+                        pred_occurred_list.extend(pred_occurred_list_temp)
+
+                    # If A MultiACCDOA Vector has a Magnitude above the threshold, Then a true event has occurred
+                    true_vectors = np.linalg.norm(true_ma_c, axis=1) >= self.prob_threshold
+                    if true_vectors.any():
+                        true_ma_c_real = true_ma_c[true_vectors, :]
+                        true_occurred_list_temp = []
+                        for multi in range(true_ma_c_real.shape[0]):
+                            same = False
+                            for true in true_occurred_list_temp:
+                                if is_duplicate(true, true_ma_c_real[multi], duplicate_threshold=self.duplicate_threshold):
+                                    same = True
+                                    break
+                            #if not same:
                             true_occurred_list_temp.append(true_ma_c_real[multi])
-                    true_occurred_list.extend(true_occurred_list_temp)
+                        true_occurred_list.extend(true_occurred_list_temp)
 
-                # Computer Minimizing Assignment of Predicted and True Occurrences
-                hungarian = np.zeros((len(pred_occurred_list), len(true_occurred_list)))
-                for i, pred in enumerate(pred_occurred_list):
-                    for j, true in enumerate(true_occurred_list):
-                        hungarian[i][j] = angular_distance(pred, true)
-                preds, trues = linear_sum_assignment(hungarian)
+                    # Computer Minimizing Assignment of Predicted and True Occurrences
+                    hungarian = np.zeros((len(pred_occurred_list), len(true_occurred_list)))
+                    for i, pred in enumerate(pred_occurred_list):
+                        for j, true in enumerate(true_occurred_list):
+                            hungarian[i][j] = angular_distance(pred, true)
+                    preds, trues = linear_sum_assignment(hungarian)
 
-                p_ci = len(pred_occurred_list)
-                r_ci = len(true_occurred_list)
+                    pred_occurred_lists.append(pred_occurred_list)
+                    true_occurred_lists.append(true_occurred_list)
+                    all_pred_trues.append((preds, trues))
+                    hungarians.append(hungarian)
 
-                fn_ci = max(0, r_ci - p_ci)
-                fp_ci = max(0, p_ci - r_ci)
-                k_ci = len(preds)
+                    p_ci = np.sum([len(pred_occurred_list) for pred_occurred_list in pred_occurred_lists])
+                    r_ci = np.sum([len(true_occurred_list) for true_occurred_list in true_occurred_lists])
 
-                fp_ci_threshold = np.sum(hungarian[preds, trues] < error_threshold)
+                    fn_ci = max(0, r_ci - p_ci)
+                    fp_ci = max(0, p_ci - r_ci)
+                    k_ci = np.sum([len(preds) for preds, trues in all_pred_trues])
 
-                fn[c] += fn_ci
-                fp[c] += fp_ci + fp_ci_threshold
-                tp[c] += k_ci - fp_ci_threshold
-                n[c] += r_ci
-                kc[c] += k_ci
+                    fp_ci_threshold = np.sum([np.sum(hungarian[preds, trues] > self.error_threshold)
+                                              for (preds, trues), hungarian in zip(all_pred_trues, hungarians)])
 
-                fn_i[c] += fn_ci
-                fp_i[c] += fp_ci + fp_ci_threshold
-                tp_i[c] += k_ci - fp_ci_threshold
-                n_i[c] += r_ci
-                kc_i[c] += k_ci
+                    self.fn[c] += fn_ci
+                    self.fp[c] += fp_ci + fp_ci_threshold
+                    self.tp[c] += k_ci - fp_ci_threshold
+                    self.n[c] += r_ci
+                    self.kc[c] += k_ci
 
-                le_c[c].extend(hungarian[preds, trues].tolist())
-                # lr_c[c].append(k_ci / (k_ci + fn_ci))
+                    fn_i += fn_ci
+                    fp_i += fp_ci + fp_ci_threshold
 
-        # Calculate Substitutions, Insertions, and Deletions
-        s += np.minimum(fn_i.sum(), fp_i.sum())
-        d += np.maximum(0, fn_i.sum() - fp_i.sum())
-        i += np.maximum(0, fp_i.sum() - fn_i.sum())
+                    for (preds, trues), hungarian in zip(all_pred_trues, hungarians):
+                        self.le_c[c].extend(hungarian[preds, trues].tolist())
+                    # lr_c[c].append(k_ci / (k_ci + fn_ci))
 
-    return tp, fp, fn, n, kc, le_c, s, d, i
+                # Calculate Substitutions, Insertions, and Deletions
+                self.s += np.minimum(fn_i, fp_i)
+                self.d += np.maximum(0, fn_i - fp_i)
+                self.i += np.maximum(0, fp_i - fn_i)
 
+    def calculate_summary_statics(self):
+        # Calculate ER metric
+        er = (self.s + self.d + self.i) / self.n.sum()
 
-def calculate_summary_statics(tp, fp, fn, n, kc, oc, s, d, i):
-    # Calculate F-Score
-    f_c = 2 * tp / (2 * kc + fp + tp-kc + fn)
-    f = np.average(f_c)
+        # Calculate F-Score
+        f_c = 2 * self.tp / (2 * self.kc + (self.fp + self.tp-self.kc) + self.fn)
+        f = np.average(f_c)
 
-    # Calculate ER metric
-    er = (s + d + i) / n.sum()
-    #er = np.average(er_c)
+        # Calculate LE
+        le_c = np.array([np.average(o) for o in self.le_c]) # / kc
+        le_c[np.isnan(le_c)] = 180
+        le = np.average(le_c)
 
-    # Calculate LE
-    le_c = oc # / kc
-    le_c[np.isnan(le_c)] = 180
-    le = np.average(le_c)
+        # Calculate LR
+        lr_c = self.kc / (self.kc + self.fn)
+        lr_c[np.isnan(lr_c)] = 0
+        lr = np.average(lr_c)
 
-    # Calculate LR
-    lr_c = kc / (kc + fn)
-    lr_c[np.isnan(lr_c)] = 0
-    lr = np.average(lr_c)
-
-    return f, er, le, lr
+        return er, f, le, lr
