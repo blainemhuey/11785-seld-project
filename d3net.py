@@ -12,7 +12,7 @@ class MultidilatedConv2dBlock(nn.Module):
                  device=None, dilation_factors=tuple([1])):
         super().__init__()
 
-        self.convolutions = []
+        self.convolutions = nn.ModuleList()
         for d in dilation_factors:
             # Calculate the padding needed to have the same output shape
             padding = (d * (kernel_size - 1)) // 2
@@ -53,7 +53,7 @@ class D2Block(nn.Module):
             self.bottleneck = None
 
         # Create multidilated layers, with each having one more dilation until all dilations are used
-        layers = []
+        layers = nn.ModuleList()
         for i in range(len(dilation_factors)):
             selected_dilation_factors = dilation_factors[:i+1]
             layers.append(MultidilatedConv2dBlock(in_channels, in_channels + growth_rate, kernel_size,
@@ -91,7 +91,7 @@ class D3Block(nn.Module):
         if B is None:
             B = 4 * k  # Bottleneck size default specified in paper
 
-        d2_blocks = []
+        d2_blocks = nn.ModuleList()
         for block in range(M):
             d2_block = D2Block(in_channels, kernel_size, k, B, c, dilation_factors=[2**i for i in range(L)])
             if in_channels > B:
@@ -114,7 +114,7 @@ class Network(torch.nn.Module):
     def __init__(self):
         super(Network, self).__init__()
 
-        self.layers = [
+        self.layers = nn.ModuleList(modules=[
             D3Block(7, 4, 4, 16, 2),
             nn.Conv2d(66, 66//2, 1),  #stride?
             nn.AvgPool2d(2),
@@ -126,18 +126,23 @@ class Network(torch.nn.Module):
             nn.AvgPool2d(2),
             D3Block(130//2, 4, 4, 40, 2),
             nn.AvgPool2d(2),
-            nn.Flatten(start_dim=-2, end_dim=-1),
-            nn.GRU(32, 160, batch_first=True), #check for num_layers if hidden = 160 doesnt work!
-        ]
+            nn.Flatten(start_dim=-2, end_dim=-1)
+        ])
 
+        self.rnn = nn.GRU(60, 160, batch_first=True) #check for num_layers if hidden = 160 doesnt work!
         self.class_layer = nn.Linear(160*162, 117)
 
     def forward(self, A):
         for i, layer in enumerate(self.layers):
+            #print(A.shape)
             A = layer(A)
+        #print(A.shape)
+        A, _ = self.rnn(A)
+        #print(A.shape)
 
-        batch_size, size_a, size_b = A[0].shape
-        A = self.class_layer(A[0].reshape((batch_size, size_a*size_b)))
+        batch_size, size_a, size_b = A.shape
+        A = self.class_layer(A.reshape((batch_size, size_a*size_b)))
+        #print(A.shape)
 
         # x = self.laysers(A).reshape((3,3,13))
-        return A.reshape((batch_size,3,3,13))
+        return A.reshape((batch_size, 3, 3, 13))
